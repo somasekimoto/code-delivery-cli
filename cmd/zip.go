@@ -1,40 +1,96 @@
-/*
-Copyright © 2024 NAME HERE <EMAIL ADDRESS>
-
-*/
 package cmd
 
 import (
+	"archive/zip"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-// zipCmd represents the zip command
 var zipCmd = &cobra.Command{
-	Use:   "zip",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Use:   "zip [target directory]",
+	Short: "Compresses the target directory into a ZIP file and moves it to the parent directory of the target",
+	Long: `Compresses the target directory with '_bak' suffix into a ZIP file named after the parent directory of the target.
+The resulting ZIP file will be placed in the same directory as the target.`,
+	Args: cobra.ExactArgs(1), // このコマンドは正確に1つの引数（ターゲットディレクトリ）を要求します
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("zip called")
+		targetDir := args[0]
+		parentDir := filepath.Dir(targetDir)                                    // _bakディレクトリの親ディレクトリを取得
+		originalDirName := strings.TrimSuffix(filepath.Base(targetDir), "_bak") // 元のディレクトリ名を取得
+		zipFile := filepath.Join(parentDir, originalDirName+".zip")             // ZIPファイルのパスを決定
+
+		fmt.Printf("Compressing directory %s into %s\n", targetDir, zipFile)
+
+		err := compress(targetDir, zipFile)
+		if err != nil {
+			fmt.Printf("Error compressing directory: %s\n", err)
+			return
+		}
+
+		fmt.Printf("Directory successfully compressed into ZIP file at %s\n", zipFile)
 	},
+}
+
+func compress(source, target string) error {
+	zipfile, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	defer zipfile.Close()
+
+	archive := zip.NewWriter(zipfile)
+	defer archive.Close()
+
+	baseSrcDir := filepath.Dir(source)
+
+	err = filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// ソースディレクトリからの相対パスを取得
+		relativePath := strings.TrimPrefix(path, baseSrcDir+string(filepath.Separator))
+
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+
+		header.Name = relativePath
+
+		if info.IsDir() {
+			header.Name += "/"
+		} else {
+			header.Method = zip.Deflate
+		}
+
+		writer, err := archive.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			_, err = io.Copy(writer, file)
+		}
+		return err
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return archive.Close()
 }
 
 func init() {
 	rootCmd.AddCommand(zipCmd)
-
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// zipCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// zipCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
